@@ -59,11 +59,12 @@ def run_labeling():
                     
                     is_contrarian_win = 0
                     emotion = post.get('emotion', '')
-                    # 如果原PO看多 (自信) 但價格跌了 -> 反轉成功
-                    if "自信" in emotion and return_rate < 0:
+                    
+                    # 包含「看跌/還有得跌」字眼的情緒（代表反向預期市場會跌）：被套、看多
+                    if ("跌" in emotion) and return_rate < 0:
                         is_contrarian_win = 1
-                    # 如果原PO看空 (崩潰) 但價格漲了 -> 反轉成功
-                    elif "崩潰" in emotion and return_rate > 0:
+                    # 包含「看漲/反彈」字眼的情緒（代表反向預期市場會漲）：停損、看空
+                    elif ("漲" in emotion) and return_rate > 0:
                         is_contrarian_win = 1
                         
                     # 已經成功驗證並打標

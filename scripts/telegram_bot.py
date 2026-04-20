@@ -8,13 +8,18 @@ import torch.nn.functional as F
 from transformers import BertTokenizer, BertForSequenceClassification
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # 匯入現有的模組
 from scrape_threads import scrape_profile
 from auto_labeler import run_labeling
 
 # --- 配置區 ---
-TELEGRAM_TOKEN = "8792257959:AAHiM2OJhvBqjE4b4AnsBjDboxgaUDiMHQY"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+if not TELEGRAM_TOKEN:
+    print("⚠️ 警告：找不到 TELEGRAM_TOKEN！請確認根目錄是否有 .env 檔案。")
 PRE_TRAINED_MODEL_NAME = 'bert-base-chinese'
 MODEL_PATH = "models/banini_model.pt"
 SUBSCRIBERS_FILE = "datasets/processed/subscribers.json"
@@ -74,11 +79,14 @@ def analyze_post_dimensions(text):
     elif any(k in text for k in ["大盤", "台指", "熊", "牛", "ETF"]):
         sector = "📈 大盤/ETF/期貨"
         
-    emotion = "平靜"
-    if any(k in text for k in ["救命", "慘", "被套", "不行了", "公園", "停損"]):
-        emotion = "😭 極度崩潰 (強反轉看漲)"
-    elif any(k in text for k in ["賺", "噴", "爽", "舒服", "數錢", "加碼"]):
-        emotion = "😎 自信得意 (即將見頂看跌)"
+    emotion = "平靜觀望 (無特殊訊號)"
+    # 根據 SKILL.md 的黃金法則：
+    if any(k in text for k in ["停損", "賣出", "認賠", "空單", "put", "看衰"]):
+        emotion = "🔪 認輸停損/看空 (底部已現👉反彈看漲)"
+    elif any(k in text for k in ["救命", "慘", "被套", "不行了", "死抱", "持有"]):
+        emotion = "😭 被套死抱中 (底部未到👉還有得跌)"
+    elif any(k in text for k in ["買", "加碼", "看多", "上車", "噴", "賺", "舒服"]):
+        emotion = "😎 看多買進/自信 (即將見頂👉高機率下跌)"
         
     return sector, emotion
 
