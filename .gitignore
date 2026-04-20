@@ -1,0 +1,27 @@
+# 機器學習模型與大型權重
+models/
+*.pt
+*.bin
+*.pth
+
+# 資料集與處理過程
+datasets/raw/*
+datasets/processed/*
+!datasets/raw/.gitkeep
+!datasets/processed/.gitkeep
+
+# Python 暫存
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.venv/
+venv/
+env/
+
+# 環境變數與秘密資訊
+.env
+*.log
+
+# 作業系統暫存
+.DS_Store
+Thumbs.db
