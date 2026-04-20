@@ -1,70 +1,56 @@
-# Banini AI: 台股社群反指標狙擊系統 (Local GPU Edition)
+# Banini AI: 全自動台股反指標狙擊系統 (Local Evolution Edition)
 
-這是一個結合自動化爬蟲、自然語言處理 (NLP) 與深度學習的端到端框架。最初基於「巴逆逆（8zz）」的反指標傳說，經過全面升級後，現在已能成為具備**時間排程自動化**與**多維度情緒分析**的 Telegram 零成本專屬交易前瞻預警系統。
+這是一個具備 **「自我進化能力」** 的端到端財經 AI 系統。它能在您的本地電腦 24/7 運作，自動爬取社群指標性帳號（如：巴逆逆），透過 BERT 預測市場反轉勝率，並根據真實股市結果進行自我迭代。
 
-## 🌟 核心特色
-- **0 成本部署**：捨棄昂貴的雲端 LLM API (如 OpenAI) 以及付費爬蟲，純粹透過本地端強大的 CUDA 算力 (RTX 3090 等 GPU) 驅動。
-- **神經網路分析**：使用經過 Fine-tuned 的 `bert-base-chinese` 預訓練模型，深度剖析社群股友的「崩潰程度」與「自信指標」。
-- **自動化戰報推播**：內建時程系統 (`JobQueue`)，於台股每日關鍵時間 (13:00 收盤前、13:45 結算後) 準時遞送反向操作情報至您的手機 Telegram。
+## 🌟 核心特點 (Core Pillars)
 
----
-
-## 🏗️ 系統架構流 (Data Pipeline)
-
-這個專案由四個關鍵的獨立模組構成：
-
-### 1. 無頭瀏覽器深潛爬蟲 (`scrape_threads.py`)
-使用非同步的 `playwright` 與 GraphQL 攔截技術，無情突破 Threads 的頁面限制，將指定帳號的歷史財經發言完整結構化。
-
-### 2. 資料清洗與自動打標 (`process_data.py` & `align_market_data.py`)
-- 自動過濾雜亂的網路用語、超連結。
-- 連接 `yfinance`，把「貼文發布當下」與「未來三天台股實際走勢」的收盤數據完美配對。產生具有黃金價值的訓練用 Ground Truth。
-
-### 3. 本地端模型煉丹 (`train_model.py`)
-一鍵即可載入清洗好的樣本資料集，使用 PyTorch 的 AdamW 與您的 NVIDIA 顯示卡，自我訓練並產生最適合您策略的權重檔 `models/banini_model.pt`。
-
-### 4. Telegram 指揮中心 (`telegram_bot.py`)
-部署在本地主機常駐的控制器：
-- `/banini`：手動即時深潛分析最新動態。
-- `/subscribe`：訂閱服務，機器人將於盤中、盤尾自動爬取資料並經過模型判斷後，若有高反轉行情，將發送警報推送。
+- **🤖 持續學習 (Continuous Learning)**：系統具備自動化打標與重訓機制。
+    - **觀察**：每日盤中自動記錄 AI 的預測值。
+    - **檢討**：3 天後自動串接 `yfinance` 檢查預測是否準確，並存入黃金資料庫。
+    - **進化**：每週日凌晨 03:00 自動背景重訓模型並執行「熱重載」，大腦每週更新一次。
+- **🔌 0 成本、高安全**：完全運作於本地 NVIDIA GPU (CUDA)，不依賴付費 LLM API。您的數據與策略完全私有化。
+- **📊 實戰級分析維度**：
+    - **產業標籤**：自動識別貼文狙擊的板塊（半導體、航運、ETF 等）。
+    - **情緒判別**：辨別「極度崩潰 (反向看多)」或「自信爆棚 (反向看空)」。
+- **📱 全功能 Telegram 指揮中心**：支援主動警報推送、歷史勝率排行、自訂情境模擬。
 
 ---
 
-## 🛠️ 環境配置與啟動指南
+## 🏛️ 系統指令集 (Telegram Commands)
 
-### 1. 安裝本地依賴
-請確保您已安裝具備 CUDA 支援的 PyTorch 環境，然後執行以下指令：
+- `/start`：啟動系統並顯示選單。
+- `/banini`：手動觸發最新情境深度掃描。
+- `/manual <標的>`：模擬分析。*（例：若她現在看多 2330，AI 會給出多高的反向風險？）*
+- `/rank`：歷史戰績榜。統計哪檔股票被點名後的「冥燈勝率」最高。
+- `/sentiment`：量測市場情緒溫度計。同時掃描多個財經帳號做綜合評分。
+- `/subscribe [門檻]`：訂閱自動定時推播。
+- `/set_alert <門檻>`：客製化警報。例如設定 `0.8` 以上才發送緊急通知。
+
+---
+
+## 🏗️ 數據流水線 (Pipeline)
+
+1. **爬蟲層 (`scrape_threads.py`)**: 使用 Playwright + GraphQL 攔截技術。
+2. **自動驗證層 (`auto_labeler.py`)**: 每日凌晨自動回測 3 天前的發文與股價報酬率。
+3. **訓練引擎 (`train_model.py`)**: 基於 BERT 的分類模型，使用 AdamW 與 GPU 加速訓練。
+4. **控制中心 (`telegram_bot.py`)**: 內建 JobQueue 非同步事件迴圈，管理所有排程任務。
+
+---
+
+## 🛠️ 環境配置
+
 ```powershell
-# 安裝大數據、機器學習與爬蟲必要套件
-pip install playwright parsel nested-lookup jmespath yfinance pandas torch transformers scikit-learn tqdm python-telegram-bot
+# 安裝機器學習與爬蟲必要套件
+pip install playwright pandas yfinance torch transformers apscheduler python-telegram-bot scikit-learn tqdm
 
 # 部署無頭瀏覽器環境
 python -m playwright install chromium
-```
 
-### 2. 模型訓練與資料建置 (可選)
-如果您想自建更龐大的資料庫與重訓演算法：
-```powershell
-python scripts/collect_huge_data.py     # 深度收集歷史貼文
-python scripts/process_data.py          # 文本正規清洗
-python scripts/align_market_data.py     # 對齊 YFinance 市場數據生成標籤
-python scripts/train_model.py           # 進入 GPU 迭代訓練模型
-```
-
-### 3. 一鍵啟動 AI 雷達 (Telegram)
-請在 `scripts/telegram_bot.py` 的第九行輸入您從 `@BotFather` 取得的 Token，接著直接啟動：
-```powershell
+# 啟動系統 (只要啟動 Bot，排程就會自動運行)
 python scripts/telegram_bot.py
 ```
-> **Tip:** 此終端機視窗只要不關閉，您的雷達系統將全天候防護！
+
+> **Tip:** 為確保進化機制正常運作，建議每週日凌晨保持電腦開啟，以利 GPU 執行神經網路權重更新。
 
 ---
-
-## 🎭 報告維度解讀指南
-您從 Telegram 收到的 AI 報表將會包含：
-- 🏷️ **產業類別**：自動標記資金意向 (如：半導體、航運、期權)。
-- 🎭 **情緒劇本**：辨識出「自信得意 (見頂預測)」或「含淚出場 (見底止跌)」。
-- 🎯 **冥燈指數**：由模型根據您的資料庫綜合出來的反指標勝率 (超過 80% 即觸發警報)。
-
----
-*Disclaimer：此開源模型與抓取分析資料僅供研究與技術交流，預測模型均基於過去機率分布演算。專案不對任何投資決策與投資損益負起連帶責任。*
+*Disclaimer：此專案僅供技術研究與量化模型開發交流使用，預測結果並非投資建議。交易風險請自行負擔。*
