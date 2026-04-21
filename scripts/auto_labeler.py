@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 
 PENDING_FILE = "datasets/pending_validation.json"
 TRAINING_FILE = "datasets/processed/aligned_training_data.csv"
+WALLET_FILE = "datasets/processed/wallet.json"
 
 def get_ticker_for_sector(sector):
     if "半導體" in sector: return "2330.TW"
@@ -67,6 +68,12 @@ def run_labeling():
                     elif ("漲" in emotion) and return_rate > 0:
                         is_contrarian_win = 1
                         
+                    # --- 計算 RL Agent Reward ---
+                    action_weight = post.get('action_weight', 0.0)
+                    reward_pct = float(return_rate * action_weight)
+                    action_str = post.get('action', '未知')
+                    # -----------------------------
+                        
                     # 已經成功驗證並打標
                     validated_posts.append({
                         "post_id": post['post_id'],
@@ -74,9 +81,11 @@ def run_labeling():
                         "timestamp": post['timestamp'],
                         "ticker": ticker,
                         "return_rate": return_rate,
-                        "is_contrarian_win": is_contrarian_win
+                        "is_contrarian_win": is_contrarian_win,
+                        "action": action_str,
+                        "reward_pct": reward_pct
                     })
-                    print(f"✅ 驗證成功貼文 {post['post_id']} -> 勝敗: {is_contrarian_win}")
+                    print(f"✅ 驗證成功貼文 {post['post_id']} -> Agent動作: {action_str}, 獲得Reward: {reward_pct:+.2%}")
                 else:
                     # 抓不到數據暫時留著
                     remaining_posts.append(post)
@@ -97,7 +106,24 @@ def run_labeling():
             os.makedirs(os.path.dirname(TRAINING_FILE), exist_ok=True)
             new_df.to_csv(TRAINING_FILE, index=False)
             
-        print(f"✅ 成功將 {len(validated_posts)} 筆新黃金樣本併入訓練資料庫。")
+        # 更新虛擬錢包 (RL Settlement)
+        if os.path.exists(WALLET_FILE):
+            with open(WALLET_FILE, "r") as f:
+                wallet = json.load(f)
+        else:
+            wallet = {"balance": 1000000.0, "total_reward_pct": 0.0, "trades": 0}
+            
+        for rp in validated_posts:
+            r = rp['reward_pct']
+            if r != 0.0:  # 觀望不動作不算 trade
+                wallet['balance'] *= (1 + r)
+                wallet['total_reward_pct'] += r
+                wallet['trades'] += 1
+                
+        with open(WALLET_FILE, "w") as f:
+            json.dump(wallet, f, ensure_ascii=False, indent=2)
+            
+        print(f"✅ 成功將 {len(validated_posts)} 筆新黃金樣本併入訓練庫，並結算至虛擬錢包。")
 
     # 更新待驗證清單
     with open(PENDING_FILE, "w") as f:

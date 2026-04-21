@@ -12,9 +12,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"使用裝置: {device}")
 
 class BaniniDataset(Dataset):
-    def __init__(self, texts, labels, tokenizer, max_len=128):
+    def __init__(self, texts, labels, rewards, tokenizer, max_len=128):
         self.texts = texts
         self.labels = labels
+        self.rewards = rewards
         self.tokenizer = tokenizer
         self.max_len = max_len
 
@@ -36,11 +37,14 @@ class BaniniDataset(Dataset):
             return_tensors='pt',
         )
 
+        reward = self.rewards[item]
+
         return {
             'text': text,
             'input_ids': encoding['input_ids'].flatten(),
             'attention_mask': encoding['attention_mask'].flatten(),
-            'labels': torch.tensor(label, dtype=torch.long)
+            'labels': torch.tensor(label, dtype=torch.long),
+            'reward': torch.tensor(reward, dtype=torch.float)
         }
 
 def train_model():
@@ -51,13 +55,20 @@ def train_model():
         return
 
     df = pd.read_csv(DATA_PATH)
-    # 我們這裡將「反指標成功」作為分類目標 (0 或 1)
-    # 也可以改為回歸預測報酬率，但分類通常在初期更穩定
+    # 我們保留原本的分類目標，但加入 RL Reward 作為訓練權重
     texts = df['text'].values
     labels = df['is_contrarian_win'].values
+    
+    # 讀取 RL Reward (如果是舊資料沒有這欄，預設塞 0.0)
+    if 'reward_pct' in df.columns:
+        rewards = df['reward_pct'].fillna(0.0).values
+    else:
+        rewards = [0.0] * len(df)
 
     # 2. 分割訓練集與測試集
-    train_texts, val_texts, train_labels, val_labels = train_test_split(texts, labels, test_size=0.2, random_state=42)
+    train_texts, val_texts, train_labels, val_labels, train_rewards, val_rewards = train_test_split(
+        texts, labels, rewards, test_size=0.2, random_state=42
+    )
 
     # 3. 初始化 Tokenizer 與模型 (使用繁體中文預訓練模型)
     PRE_TRAINED_MODEL_NAME = 'bert-base-chinese'
@@ -66,8 +77,8 @@ def train_model():
     model = model.to(device)
 
     # 4. 準備 DataLoader
-    train_data = BaniniDataset(train_texts, train_labels, tokenizer)
-    val_data = BaniniDataset(val_texts, val_labels, tokenizer)
+    train_data = BaniniDataset(train_texts, train_labels, train_rewards, tokenizer)
+    val_data = BaniniDataset(val_texts, val_labels, val_rewards, tokenizer)
     
     train_loader = DataLoader(train_data, batch_size=16, shuffle=True)
     val_loader = DataLoader(val_data, batch_size=16)
@@ -87,15 +98,25 @@ def train_model():
             input_ids = batch['input_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels'].to(device)
+            rewards = batch['reward'].to(device)
 
-            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
-            loss = outputs.loss
+            # 取得未經 softmax 的 Logits
+            outputs = model(input_ids, attention_mask=attention_mask)
+            logits = outputs.logits
+            
+            # 自定義 RL 獎勵加權 Loss 計算
+            # 若 Reward 越高 (代表 Agent 決策帶來極大虧損或極大獲利)，我們放大該樣本的 Loss 權重
+            # 讓神經網路「深刻記住」這次教訓
+            weights = 1.0 + torch.abs(rewards) * 10.0 # 報酬率每 1% 放大 0.1 倍學習力道
+            base_loss = torch.nn.functional.cross_entropy(logits, labels, reduction='none')
+            
+            loss = (base_loss * weights).mean()
             loss.backward()
             optimizer.step()
 
             total_loss += loss.item()
             loop.set_description(f"Epoch {epoch+1}/{epochs}")
-            loop.set_postfix(loss=loss.item())
+            loop.set_postfix(rl_loss=loss.item())
 
     # 7. 儲存模型
     MODEL_SAVE_PATH = "models/banini_model.pt"

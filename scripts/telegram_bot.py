@@ -15,6 +15,7 @@ load_dotenv()
 # 匯入現有的模組
 from scrape_threads import scrape_profile
 from auto_labeler import run_labeling
+from trading_agent import decide_action, get_action_weight
 
 # --- 配置區 ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -274,9 +275,14 @@ async def generate_report(check_new_only=False):
                 stars = "🔥" * int(score * 10) if score > 0.5 else "❄️" * int((1-score)*5)
                 
                 report += f"{i+1}. 「{text[:40]}...」\n"
-                report += f"   🏷️ 產業: {sector}\n"
-                report += f"   🎭 狀態: {emotion}\n"
-                report += f"   🎯 冥燈信心: {score:.2%} {stars}\n\n"
+                # --- 新增 Agent Action (RL) ---
+                action = decide_action(score, emotion)
+                weight = get_action_weight(action)
+                # ------------------------------
+                report += f"🎯 **分析標的:** {sector}\n"
+                report += f"🗣️ **情境判定:** {emotion}\n"
+                report += f"🧠 **反轉危險指數:** {score:.1%}\n"
+                report += f"🤖 **Agent 動作:** `{action}` (權重: {weight})\n\n"
 
             avg_score = total_score / len(target_posts)
             if avg_score > 0.8:
@@ -300,15 +306,22 @@ async def generate_report(check_new_only=False):
                     pending = []
                     
                 existing_ids = {p['post_id'] for p in pending}
-                for post, score, sec, emo in zip(target_posts, [predict_contrarian(p['text']) for p in target_posts], [analyze_post_dimensions(p['text'])[0] for p in target_posts], [analyze_post_dimensions(p['text'])[1] for p in target_posts]):
+                for post in target_posts:
                     if post['id'] not in existing_ids:
+                        text = post['text']
+                        s, e = analyze_post_dimensions(text)
+                        sc = predict_contrarian(text)
+                        act = decide_action(sc, e)
+                        
                         pending.append({
                             "post_id": post['id'],
-                            "text": post['text'],
-                            "sector": sec,
-                            "emotion": emo,
+                            "text": text,
+                            "sector": s,
+                            "emotion": e,
                             "timestamp": datetime.now().isoformat(),
-                            "predicted_score": score
+                            "predicted_score": float(sc),
+                            "action": act,
+                            "action_weight": float(get_action_weight(act))
                         })
                 with open(PENDING_FILE, "w") as f:
                     json.dump(pending, f, ensure_ascii=False, indent=2)
@@ -321,6 +334,29 @@ async def generate_report(check_new_only=False):
             return "🕒 爬蟲回應逾時 (Threads 可能正在阻擋或網路不穩)。", 0
         except Exception as e:
             return f"❌ 系統錯誤: {str(e)}", 0
+
+# --- Agent 虛擬錢包功能 ---
+def load_wallet():
+    WALLET_FILE = "datasets/processed/wallet.json"
+    if os.path.exists(WALLET_FILE):
+        with open(WALLET_FILE, "r") as f:
+            return json.load(f)
+    return {"balance": 1000000.0, "total_reward_pct": 0.0, "trades": 0}
+
+async def handle_wallet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    wallet = load_wallet()
+    balance = wallet["balance"]
+    trades = wallet["trades"]
+    reward = wallet["total_reward_pct"] * 100
+    
+    text = (
+        "💼 **Agent 模擬交易虛擬戶頭 (單位: NTD)**\n\n"
+        f"🏦 目前總資產: `{balance:,.0f}` 元\n"
+        f"📊 執行決策數: `{trades}` 次\n"
+        f"📈 Agent 累積獲利率 (RL Reward): `{reward:+.2f}%`\n\n"
+        "_此帳戶根據每次模型給出的做多/做空/觀望訊號，並與 3天後的真實市場驗證對齊後所虛擬結算之結果。_"
+    )
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 # --- 排程工作 ---
 async def midnight_labeler_job(context: ContextTypes.DEFAULT_TYPE):
@@ -388,12 +424,13 @@ if __name__ == "__main__":
     
     # 註冊指令
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("banini", force_check_banini))
     app.add_handler(CommandHandler("subscribe", subscribe))
     app.add_handler(CommandHandler("set_alert", set_alert))
     app.add_handler(CommandHandler("rank", print_rank))
     app.add_handler(CommandHandler("manual", manual_diagnose))
     app.add_handler(CommandHandler("sentiment", check_sentiment))
-    app.add_handler(CommandHandler("banini", force_check_banini))
+    app.add_handler(CommandHandler("wallet", handle_wallet))
     
     # 註冊排程 (使用台北時間)
     jq = app.job_queue
