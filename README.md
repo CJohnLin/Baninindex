@@ -8,7 +8,7 @@
     - **觀察**：每日盤中自動記錄 AI 的預測值。
     - **檢討**：3 天後自動串接 `yfinance` 檢查預測是否準確，並存入黃金資料庫。
     - **進化**：每週日凌晨 03:00 自動背景重訓模型並執行「熱重載」，大腦每週更新一次。
-- **🔌 0 成本、高安全**：完全運作於本地 NVIDIA GPU (CUDA)，不依賴付費 LLM API。您的數據與策略完全私有化。
+- **🔌 0 成本、超輕量**：完全運作於本地 NVIDIA GPU (CUDA)，不依賴付費 LLM API。搭載 **Lazy Load (延遲載入)** 架構，閒置時不佔用 VRAM。
 - **📊 實戰級分析維度**：
     - **產業標籤**：自動識別貼文狙擊的板塊（半導體、航運、ETF 等）。
     - **情緒判別**：辨別「極度崩潰 (反向看多)」或「自信爆棚 (反向看空)」。
@@ -28,12 +28,16 @@
 
 ---
 
-## 🏗️ 數據流水線 (Pipeline)
+## 🏗️ 數據流水線與架構 (Pipeline & Architecture)
 
-1. **爬蟲層 (`scrape_threads.py`)**: 使用 Playwright + GraphQL 攔截技術。
-2. **自動驗證層 (`auto_labeler.py`)**: 每日凌晨自動回測 3 天前的發文與股價報酬率。
-3. **訓練引擎 (`train_model.py`)**: 基於 BERT 的分類模型，使用 AdamW 與 GPU 加速訓練。
-4. **控制中心 (`telegram_bot.py`)**: 內建 JobQueue 非同步事件迴圈，管理所有排程任務。
+本系統採 **高度解耦 (Layered & Decoupled)** 架構，確保資源的高效利用與靈活性：
+
+1. **獨立大腦層 (`agent_core.py`)**: 本系統的 AI 核心，負責統籌爬蟲與 BERT 模型推論。
+    - **Lazy Load (延遲載入)**：AI 模型只在指令觸發時動態掛載至 GPU，閒置時不霸佔 VRAM。
+    - **Standalone 執行**：無須設定 `.env` 或 Telegram Token，直接跑 `python scripts/agent_core.py` 即可獲得分析報告。
+2. **無頭爬蟲層 (`scrape_threads.py`)**: 透過 Playwright 靜默攔截 API 提取數據，無須付費金鑰。
+3. **自我進化層 (`auto_labeler.py`, `train_model.py`)**: 每日對 3 天前的預測自動打標回測，並據此重訓大腦權重。
+4. **展示與控制中心 (`telegram_bot.py`)**: 純粹的介面層（Layer 3），只負責與使用者對話並管理排程，將運算重擔交給底層 Core 即時執行。
 
 ---
 
@@ -46,7 +50,10 @@ pip install playwright pandas yfinance torch transformers apscheduler python-tel
 # 部署無頭瀏覽器環境
 python -m playwright install chromium
 
-# 啟動系統 (只要啟動 Bot，排程就會自動運行)
+# 方式 A：免配置、純 CLI 本地測試
+python scripts/agent_core.py
+
+# 方式 B：啟動完整 Telegram 指揮中心 (需設定 .env)
 python scripts/telegram_bot.py
 ```
 

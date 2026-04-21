@@ -1,11 +1,8 @@
 import asyncio
 import os
 import json
-import torch
 import pandas as pd
 from datetime import time, timezone, timedelta, datetime
-import torch.nn.functional as F
-from transformers import BertTokenizer, BertForSequenceClassification
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from dotenv import load_dotenv
@@ -13,9 +10,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 匯入現有的模組
-from scrape_threads import scrape_profile
 from auto_labeler import run_labeling
-from trading_agent import decide_action, get_action_weight
+# 匯入解耦後的核心 AI 模組
+import agent_core
 
 # --- 配置區 ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -29,9 +26,7 @@ DATASET_FILE = "datasets/processed/aligned_training_data.csv"
 # 設定台北時區
 TAIPEI_TZ = timezone(timedelta(hours=8))
 
-# 狀態與資源鎖
-last_seen_post_id = None
-crawler_lock = asyncio.Lock()
+# 將原本的資源鎖和模型交由 agent_core 接管
 
 # --- 工具函數：訂閱管理 ---
 def load_subscribers() -> dict:
@@ -55,55 +50,7 @@ def update_subscriber(chat_id, threshold=0.60):
     with open(SUBSCRIBERS_FILE, "w") as f:
         json.dump(subs, f)
 
-# --- 模型載入與熱更新 ---
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-tokenizer = BertTokenizer.from_pretrained(PRE_TRAINED_MODEL_NAME)
-model = BertForSequenceClassification.from_pretrained(PRE_TRAINED_MODEL_NAME, num_labels=2)
-
-def reload_model_weights():
-    if os.path.exists(MODEL_PATH):
-        model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
-        print(f"✅ 成功載入/更新本地模型: {MODEL_PATH}")
-    else:
-        print(f"⚠️ 找不到模型權重，將使用初始模型進行預測。")
-    model.to(device)
-    model.eval()
-
-reload_model_weights()
-
-def analyze_post_dimensions(text):
-    sector = "未知"
-    if any(k in text for k in ["台積", "半導", "聯發", "晶片", "GG", "2330"]):
-        sector = "🔌 半導體/電子"
-    elif any(k in text for k in ["長榮", "陽明", "航運", "海運", "萬海"]):
-        sector = "🚢 航運"
-    elif any(k in text for k in ["大盤", "台指", "熊", "牛", "ETF"]):
-        sector = "📈 大盤/ETF/期貨"
-        
-    emotion = "平靜觀望 (無特殊訊號)"
-    # 根據 SKILL.md 的黃金法則：
-    if any(k in text for k in ["停損", "賣出", "認賠", "空單", "put", "看衰"]):
-        emotion = "🔪 認輸停損/看空 (底部已現👉反彈看漲)"
-    elif any(k in text for k in ["救命", "慘", "被套", "不行了", "死抱", "持有"]):
-        emotion = "😭 被套死抱中 (底部未到👉還有得跌)"
-    elif any(k in text for k in ["買", "加碼", "看多", "上車", "噴", "賺", "舒服"]):
-        emotion = "😎 看多買進/自信 (即將見頂👉高機率下跌)"
-        
-    return sector, emotion
-
-def predict_contrarian(text):
-    inputs = tokenizer.encode_plus(
-        text, add_special_tokens=True, max_length=128,
-        padding='max_length', truncation=True, return_tensors='pt'
-    )
-    input_ids = inputs['input_ids'].to(device)
-    attention_mask = inputs['attention_mask'].to(device)
-    
-    with torch.no_grad():
-        outputs = model(input_ids, attention_mask=attention_mask)
-        probs = F.softmax(outputs.logits, dim=1)
-        score = probs[0][1].item()
-    return score
+# 模型現在會在需要時由 agent_core 自動 Lazy Load
 
 # --- Bot 擴充指令 ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -174,8 +121,8 @@ async def manual_diagnose(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text_bull = f"重倉買進 {ticker}，準備要噴了，大家快上車！"
     text_bear = f"受不了了，{ticker} 這個垃圾，我認賠停損出場！"
     
-    score_bull = predict_contrarian(text_bull)
-    score_bear = predict_contrarian(text_bear)
+    score_bull = agent_core.predict_contrarian(text_bull)
+    score_bear = agent_core.predict_contrarian(text_bear)
     
     msg = f"🧪 **虛擬情境模擬：{ticker}**\n"
     msg += f"如果您看見她發布看多貼文：\n"
@@ -191,45 +138,16 @@ async def manual_diagnose(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def check_sentiment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("📡 正在掃描財經網紅群體情緒 (這需要大約一分鐘)...")
     
-    if crawler_lock.locked():
-        await msg.edit_text("⏳ 爬蟲正在運行，請稍候重試。")
-        return
-
-    async with crawler_lock:
-        try:
-            users = ["banini31", "8zz_trade"]
-            total_score = 0
-            count = 0
-            
-            for u in users:
-                results = await asyncio.wait_for(scrape_profile(u, max_scroll=1), timeout=60)
-                own_posts = [p for p in results if p["author"] == u][:2]
-                for p in own_posts:
-                    total_score += predict_contrarian(p['text'])
-                    count += 1
-            
-            if count == 0:
-                await msg.edit_text("❌ 無法獲取最新的群眾貼文。")
-                return
-                
-            avg_score = total_score / count
-            
-            status = "🔥 極度貪婪 (危險)" if avg_score > 0.7 else ("❄️ 極度恐慌 (機會)" if avg_score < 0.3 else "⚖️ 中性盤整")
-            
-            report = "🌐 **社群大眾情緒溫度計**\n-----------------\n"
-            report += f"分析樣本：{count} 則網紅貼文\n"
-            report += f"情緒指數：`{avg_score:.1%}`\n"
-            report += f"狀態判定：**{status}**\n"
-            
-            await msg.edit_text(report, parse_mode='Markdown')
-            
-        except Exception as e:
-            await msg.edit_text(f"❌ 量測市場情緒時失敗: {e}")
+    report, _ = await agent_core.check_social_sentiment()
+    if not report:
+        await msg.edit_text("❌ 無法獲取最新資料。")
+    else:
+        await msg.edit_text(report, parse_mode='Markdown')
 
 # --- 分析報告 ---
 async def force_check_banini(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = await update.message.reply_text("🔍 手動觸發：正在深度爬取與 AI 分析中...")
-    result = await generate_report()
+    result = await agent_core.generate_report()
     if not result:
         await msg.edit_text("目前沒抓到新資料。")
         return
@@ -240,100 +158,6 @@ async def force_check_banini(update: Update, context: ContextTypes.DEFAULT_TYPE)
         report = result
         
     await msg.edit_text(report, parse_mode='Markdown')
-
-async def generate_report(check_new_only=False):
-    global last_seen_post_id
-    
-    if crawler_lock.locked():
-        return "⏳ 系統正忙於處理前一個請求，請稍候 30 秒再試一次。"
-
-    async with crawler_lock:
-        try:
-            username = "banini31"
-            results = await asyncio.wait_for(scrape_profile(username, max_scroll=3), timeout=90)
-            own_posts = [p for p in results if p["author"] == username]
-            
-            if not own_posts: return None
-
-            latest_id = own_posts[0]['id']
-            if check_new_only and last_seen_post_id == latest_id:
-                return None
-                
-            last_seen_post_id = latest_id
-
-            report = f"📊 **巴逆逆 (8zz) 反指標分析戰報**\n"
-            report += "--------------------------------\n"
-            
-            total_score = 0
-            target_posts = own_posts[:3]
-            for i, post in enumerate(target_posts):
-                text = post['text']
-                score = predict_contrarian(text)
-                sector, emotion = analyze_post_dimensions(text)
-                total_score += score
-                
-                stars = "🔥" * int(score * 10) if score > 0.5 else "❄️" * int((1-score)*5)
-                
-                report += f"{i+1}. 「{text[:40]}...」\n"
-                # --- 新增 Agent Action (RL) ---
-                action = decide_action(score, emotion)
-                weight = get_action_weight(action)
-                # ------------------------------
-                report += f"🎯 **分析標的:** {sector}\n"
-                report += f"🗣️ **情境判定:** {emotion}\n"
-                report += f"🧠 **反轉危險指數:** {score:.1%}\n"
-                report += f"🤖 **Agent 動作:** `{action}` (權重: {weight})\n\n"
-
-            avg_score = total_score / len(target_posts)
-            if avg_score > 0.8:
-                status = "🚨 **極度危險！強烈建議反向操作**"
-            elif avg_score > 0.6:
-                status = "⚠️ 微妙區間，建議謹慎觀察"
-            else:
-                status = "✅ 沒事，目前反轉機率低"
-                
-            report += "--------------------------------\n"
-            report += f"📢 **綜合判定：**\n{status}\n"
-            report += f"🧠 本地 AI 綜合反轉指數: {avg_score:.2%}\n"
-            
-            # --- 記錄入未卜先知庫 ---
-            PENDING_FILE = "datasets/pending_validation.json"
-            try:
-                if os.path.exists(PENDING_FILE):
-                    with open(PENDING_FILE, "r") as f:
-                        pending = json.load(f)
-                else:
-                    pending = []
-                    
-                existing_ids = {p['post_id'] for p in pending}
-                for post in target_posts:
-                    if post['id'] not in existing_ids:
-                        text = post['text']
-                        s, e = analyze_post_dimensions(text)
-                        sc = predict_contrarian(text)
-                        act = decide_action(sc, e)
-                        
-                        pending.append({
-                            "post_id": post['id'],
-                            "text": text,
-                            "sector": s,
-                            "emotion": e,
-                            "timestamp": datetime.now().isoformat(),
-                            "predicted_score": float(sc),
-                            "action": act,
-                            "action_weight": float(get_action_weight(act))
-                        })
-                with open(PENDING_FILE, "w") as f:
-                    json.dump(pending, f, ensure_ascii=False, indent=2)
-            except Exception as e:
-                print(f"寫入未卜先知庫失敗: {e}")
-                
-            return report, avg_score
-
-        except asyncio.TimeoutError:
-            return "🕒 爬蟲回應逾時 (Threads 可能正在阻擋或網路不穩)。", 0
-        except Exception as e:
-            return f"❌ 系統錯誤: {str(e)}", 0
 
 # --- Agent 虛擬錢包功能 ---
 def load_wallet():
@@ -386,7 +210,7 @@ async def weekly_retrain_job(context: ContextTypes.DEFAULT_TYPE):
     
     if process.returncode == 0:
         # 重訓成功，進行熱重載
-        reload_model_weights()
+        agent_core.reload_model_weights()
         for chat_id_str in subs:
             try:
                 await context.bot.send_message(chat_id=chat_id_str, text="🎉 **自我進化完成**\n模型已成功載入最新權重 (Hot Reload)，您現在擁有一個更聰明的巴逆逆雷達了！")
@@ -402,7 +226,7 @@ async def weekly_retrain_job(context: ContextTypes.DEFAULT_TYPE):
 
 async def auto_push_job(context: ContextTypes.DEFAULT_TYPE):
     print("啟動自動推播檢查機制...")
-    result = await generate_report(check_new_only=False)
+    result = await agent_core.generate_report(check_new_only=False)
     if not result: return
     
     if isinstance(result, tuple):
