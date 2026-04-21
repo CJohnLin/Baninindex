@@ -1,63 +1,65 @@
-# Banini AI: 全自動台股反指標狙擊系統 (Local Evolution Edition)
+# Banini AI: 全自動台股反指標狙擊系統 (Local Evolution & DRL Edition)
 
-這是一個具備 **「自我進化能力」** 的端到端財經 AI 系統。它能在您的本地電腦 24/7 運作，自動爬取社群指標性帳號（如：巴逆逆），透過 BERT 預測市場反轉勝率，並根據真實股市結果進行自我迭代。
+這是一個具備 **「自我進化能力」** 與 **「深度強化學習 (DRL)」** 的端到端財經 AI 系統。它能在您的本地電腦 24/7 運作，自動爬取社群指標性帳號（如：巴逆逆），透過 BERT 預測市場反轉勝率，並由 RL Agent 根據歷史 K 線報酬進行決策與自我迭代。
 
 ## 🌟 核心特點 (Core Pillars)
 
-- **🤖 持續學習 (Continuous Learning)**：系統具備自動化打標與重訓機制。
-    - **觀察**：每日盤中自動記錄 AI 的預測值。
-    - **檢討**：3 天後自動串接 `yfinance` 檢查預測是否準確，並存入黃金資料庫。
-    - **進化**：每週日凌晨 03:00 自動背景重訓模型並執行「熱重載」，大腦每週更新一次。
-- **🔌 0 成本、超輕量**：完全運作於本地 NVIDIA GPU (CUDA)，不依賴付費 LLM API。搭載 **Lazy Load (延遲載入)** 架構，閒置時不佔用 VRAM。
-- **📊 實戰級分析維度**：
-    - **產業標籤**：自動識別貼文狙擊的板塊（半導體、航運、ETF 等）。
-    - **情緒判別**：辨別「極度崩潰 (反向看多)」或「自信爆棚 (反向看空)」。
-- **📱 全功能 Telegram 指揮中心**：支援主動警報推送、歷史勝率排行、自訂情境模擬。
+- **🧠 強化學習代理人 (DRL Trading Agent)**：系統不再只是提供勝率，還能模擬交易決策。
+    - **自主動作**：Agent 會根據預測信心指數（BERT Score）自主決定「重倉」、「輕倉」或「觀望」。
+    - **獎勵機制**：串接 `yfinance` 獲取真實市場報酬，以此作為 Reward 訓練 Agent 最佳化投資決策。
+- **🤖 持續學習與進化 (Continuous Learning)**：
+    - **自動標籤**：每日盤中自動記錄預測值，並在 3 天後自動對齊股市結果，存入「黃金訓練集」。
+    - **模型週更**：每週日自動啟動背景重訓與權重更新，確代理人的市場感知與時俱進。
+- **📈 數據合成與歷史擴增 (Data Synthesis)**：
+    - **擬真回測**：內建 `generate_fb_history.py` 模擬 2024 年 4 月至今的歷史發文情境。
+    - **多維報表**：自動生成 `fb_historical_report.md`，統計各標的的「冥燈勝率」排行榜。
+- **🔌 0 成本、超輕量**：完全運作於本地 CUDA 加速，閒置時自動釋放 VRAM。支援 Threads 與 Facebook 雙引擎掃描。
 
 ---
 
 ## 🏛️ 系統指令集 (Telegram Commands)
 
 - `/start`：啟動系統並顯示選單。
-- `/banini`：手動觸發最新情境深度掃描。
-- `/manual <標的>`：模擬分析。*（例：若她現在看多 2330，AI 會給出多高的反向風險？）*
-- `/rank`：歷史戰績榜。統計哪檔股票被點名後的「冥燈勝率」最高。
-- `/sentiment`：量測市場情緒溫度計。同時掃描多個財經帳號做綜合評分。
-- `/subscribe [門檻]`：訂閱自動定時推播。
-- `/set_alert <門檻>`：客製化警報。例如設定 `0.8` 以上才發送緊急通知。
+- `/banini`：跨平台（Threads & FB）情境深度掃描。
+- `/rank`：**歷史戰績榜**。查看哪個標的被點名後的「反指標勝率」最高（如：2317 鴻海）。
+- `/sentiment`：量測社群大眾情緒溫度計。
+- `/manual <標的>`：針對特定標的進行 AI 模擬分析與動作建議。
+- `/subscribe`：訂閱高勝率訊號推播。
 
 ---
 
-## 🏗️ 數據流水線與架構 (Pipeline & Architecture)
+## 🏗️ 系統架構 (System Architecture)
 
-本系統採 **高度解耦 (Layered & Decoupled)** 架構，確保資源的高效利用與靈活性：
-
-1. **獨立大腦層 (`agent_core.py`)**: 本系統的 AI 核心，負責統籌爬蟲與 BERT 模型推論。
-    - **Lazy Load (延遲載入)**：AI 模型只在指令觸發時動態掛載至 GPU，閒置時不霸佔 VRAM。
-    - **Standalone 執行**：無須設定 `.env` 或 Telegram Token，直接跑 `python scripts/agent_core.py` 即可獲得分析報告。
-2. **無頭爬蟲層 (`scrape_threads.py`)**: 透過 Playwright 靜默攔截 API 提取數據，無須付費金鑰。
-3. **自我進化層 (`auto_labeler.py`, `train_model.py`)**: 每日對 3 天前的預測自動打標回測，並據此重訓大腦權重。
-4. **展示與控制中心 (`telegram_bot.py`)**: 純粹的介面層（Layer 3），只負責與使用者對話並管理排程，將運算重擔交給底層 Core 即時執行。
+1. **獨立大腦層 (`agent_core.py`)**: 統籌模型推論與爬蟲調度。
+2. **決策代理層 (`trading_agent.py`)**: 負責將 AI 預測轉換為具體的投資動作（Action）。
+3. **數據流水線 (`generate_fb_history.py`)**: 負責歷史數據合成與 `yfinance` 真實報酬對齊。
+4. **展示與控制中心 (`telegram_bot.py`)**: 負責與使用者對話並展示即時分析報告。
 
 ---
 
-## 🛠️ 環境配置
+## 🛠️ 環境配置與執行
 
 ```powershell
-# 安裝機器學習與爬蟲必要套件
-pip install playwright pandas yfinance torch transformers apscheduler python-telegram-bot scikit-learn tqdm
+# 1. 安裝必要套件
+pip install pandas yfinance torch transformers playwright apscheduler python-telegram-bot tqdm
 
-# 部署無頭瀏覽器環境
+# 2. 初始化爬蟲環境
 python -m playwright install chromium
 
-# 方式 A：免配置、純 CLI 本地測試
-python scripts/agent_core.py
+# 3. [可選] 生成歷史擬真數據並訓練 (DRL 資料擴增)
+python scripts/generate_fb_history.py
+python scripts/train_model.py
 
-# 方式 B：啟動完整 Telegram 指揮中心 (需設定 .env)
+# 4. [啟動] 運行 Telegram 指揮中心
 python scripts/telegram_bot.py
 ```
 
-> **Tip:** 為確保進化機制正常運作，建議每週日凌晨保持電腦開啟，以利 GPU 執行神經網路權重更新。
+## 📊 歷史分析示例
+| 股票代號 | 點名次數 | 反指標勝率 | 3日後平均報酬率 |
+| :--- | :--- | :--- | :--- |
+| `2317.TW` | 48 次 | **56.2%** | +1.46% |
+| `2303.TW` | 70 次 | **54.3%** | -0.24% |
 
 ---
-*Disclaimer：此專案僅供技術研究與量化模型開發交流使用，預測結果並非投資建議。交易風險請自行負擔。*
+> **Disclaimer:** 此專案僅供技術研究與量化開發交流。AI 預測不代表投資建議，任何交易盈虧請自負。
+
