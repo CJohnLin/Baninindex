@@ -17,7 +17,7 @@ import agent_core
 # --- 配置區 ---
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 if not TELEGRAM_TOKEN:
-    print("⚠️ 警告：找不到 TELEGRAM_TOKEN！請確認根目錄是否有 .env 檔案。")
+    print("警告：找不到 TELEGRAM_TOKEN！請確認根目錄是否有 .env 檔案。")
 PRE_TRAINED_MODEL_NAME = 'bert-base-chinese'
 MODEL_PATH = "models/banini_model.pt"
 SUBSCRIBERS_FILE = "datasets/processed/subscribers.json"
@@ -265,5 +265,5 @@ if __name__ == "__main__":
     jq.run_daily(midnight_labeler_job, time(hour=2, minute=0, tzinfo=TAIPEI_TZ))
     jq.run_daily(weekly_retrain_job, time(hour=3, minute=0, tzinfo=TAIPEI_TZ), days=(6,))  # 6 = 星期日
 
-    print("🚀 Telegram Bot (終極版：排行榜/情緒/持續進化) 已上線！ 等候操作中...")
+    print("Telegram Bot (終極版：排行榜/情緒/持續進化) 已上線！ 等候操作中...")
     app.run_polling()

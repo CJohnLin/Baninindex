@@ -6,6 +6,7 @@ import torch.nn.functional as F
 from datetime import datetime
 
 from scrape_threads import scrape_profile
+from scrape_facebook import scrape_facebook_profile
 from trading_agent import decide_action, get_action_weight
 
 PRE_TRAINED_MODEL_NAME = 'bert-base-chinese'
@@ -58,7 +59,7 @@ def reload_model_weights():
             _model.load_state_dict(torch.load(MODEL_PATH, map_location=device))
             _model.to(device)
             _model.eval()
-            print("✅ 已重新載入模型權重")
+            print("已重新載入模型權重")
 
 def analyze_post_dimensions(text):
     sector = "未知"
@@ -140,28 +141,64 @@ async def generate_report(check_new_only=False):
     async with lock:
         try:
             username = "banini31"
-            results = await asyncio.wait_for(scrape_profile(username, max_scroll=3), timeout=90)
-            own_posts = [p for p in results if p["author"] == username]
             
-            if not own_posts: return None
-            latest_id = own_posts[0]['id']
+            # 雙引擎同時啟動
+            threads_task = scrape_profile(username, max_scroll=3)
+            fb_task = scrape_facebook_profile(username, max_scroll=3)
+            
+            threads_res, fb_res = await asyncio.gather(
+                asyncio.wait_for(threads_task, timeout=90),
+                asyncio.wait_for(fb_task, timeout=90),
+                return_exceptions=True
+            )
+            
+            combined_posts = []
+            
+            if not isinstance(threads_res, Exception) and threads_res:
+                for p in threads_res:
+                    if p.get("author") == username:
+                        p['source'] = "Threads"
+                        combined_posts.append(p)
+                
+            if not isinstance(fb_res, Exception) and fb_res:
+                for p in fb_res:
+                    if p.get("author") == username:
+                        p['source'] = "Facebook"
+                        combined_posts.append(p)
+
+            if not combined_posts: return None
+            
+            # 去重機制：依內文前 15 字元判斷
+            unique_posts = []
+            seen_snippets = set()
+            
+            for p in combined_posts:
+                snippet = p['text'][:15].replace(" ", "").replace("\n", "")
+                if snippet not in seen_snippets:
+                    seen_snippets.add(snippet)
+                    unique_posts.append(p)
+                    
+            if not unique_posts: return None
+            
+            latest_id = unique_posts[0]['id']
             if check_new_only and last_seen_post_id == latest_id:
                 return None
                 
             last_seen_post_id = latest_id
             
-            report = f"📊 **巴逆逆 (8zz) 反指標分析戰報**\n"
+            report = f"📊 **巴逆逆 跨平台反指標分析戰報**\n"
             report += "--------------------------------\n"
             
             total_score = 0
-            target_posts = own_posts[:3]
+            target_posts = unique_posts[:3]
             for i, post in enumerate(target_posts):
                 text = post['text']
+                source_tag = "🔵 FB" if post.get('source') == "Facebook" else "🟣 Threads"
                 score = predict_contrarian(text)
                 sector, emotion = analyze_post_dimensions(text)
                 total_score += score
                 
-                report += f"{i+1}. 「{text[:40]}...」\n"
+                report += f"{i+1}. [{source_tag}] 「{text[:40]}...」\n"
                 
                 action = decide_action(score, emotion)
                 weight = get_action_weight(action)
@@ -230,7 +267,8 @@ if __name__ == "__main__":
         report_result = await generate_report()
         if report_result:
             rep, score = report_result
-            print("\n" + rep)
+            safe_rep = rep.encode('cp950', 'replace').decode('cp950')
+            print("\n" + safe_rep)
         else:
             print("目前沒抓到新資料。")
     asyncio.run(main())
